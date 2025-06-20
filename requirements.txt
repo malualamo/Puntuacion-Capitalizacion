@@ -2,3 +2,5 @@ streamlit
 torch
 transformers
 huggingface-hub
+google-genai
+python-dotenv

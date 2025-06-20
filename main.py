@@ -1,10 +1,18 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import streamlit as st
 import torch
 from transformers import BertModel, BertTokenizerFast
 from huggingface_hub import hf_hub_download
 from model import PunctuationCapitalizationRNN, PUNCT_TAGS, CAP_TAGS
-from inference_utils import predict_and_reconstruct
+from utils import predict_and_reconstruct, save_feedback
+from google import genai
+from google.genai import types
+
+client = genai.Client(
+    api_key= st.secrets["GOOGLE_GENAI_API_KEY"] or os.getenv("GOOGLE_GENAI_API_KEY"),
+)
 
 @st.cache_resource
 def load_model():
@@ -50,11 +58,23 @@ st.title("Reconstrucción de Texto con Puntuación y Capitalización")
 sentence = st.text_input("Ingresá texto:")
 
 if sentence:
-    result = predict_and_reconstruct(model, sentence, tokenizer)
+    result = predict_and_reconstruct(model, sentence.lower(), tokenizer)
     st.write("**Resultado:**", result)
-    st.download_button(
-        label="Descargar resultado",
-        data=result.encode("utf-8"),
-        file_name="prediction.txt",
-        mime="text/plain"
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents="Por favor, revisa el siguiente texto y realiza las correcciones necesarias en puntuación y capitalización:\n\n" + result 
+        + "\n\nAsegúrate de que el texto esté correctamente puntuado y capitalizado."
+        + "\n\n**Nota:** No agregues ni elimines palabras, solo corrige la puntuación y la capitalización."
+        + "\n\n SOLO DEVOLVÉ EL TEXTO CORREGIDO, SIN EXPLICACIONES NI COMENTARIOS.",
+        config=types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_budget=0)
+        ),
     )
+    if response and response.text:
+        st.write("**Resultado segun Gemini:**", response.text)
+
+
+    if st.button("Predijo mal la RNN"):
+        save_feedback(sentence, result)
+        st.success(f"Feedback guardado!")

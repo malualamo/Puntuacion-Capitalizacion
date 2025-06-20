@@ -1,1 +1,3 @@
 /*.pt
+.env
+secrets.toml

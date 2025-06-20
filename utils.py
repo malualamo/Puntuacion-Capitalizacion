@@ -1,5 +1,7 @@
+import json
 import torch
 import random
+
 PUNCT_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3, "¿": 4}
 CAP_TAGS = {"lower": 0, "init": 1, "mix": 2, "upper": 3}
 
@@ -78,3 +80,13 @@ def predict_and_reconstruct(model, sentence, tokenizer, max_length=64):
         final_words.append(w)
 
     return " ".join(final_words)
+
+
+def save_feedback(inp: str, pred: str, FEEDBACK_FILE: str = "feedback.jsonl"):
+    entry = {
+        "input": inp,
+        "prediction": pred
+    }
+    # abre en modo append; crea si no existe
+    with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
