@@ -55,12 +55,30 @@ model     = load_model()
 tokenizer = load_tokenizer()
 
 st.title("Reconstrucción de Texto con Puntuación y Capitalización")
+
+st.info("""
+✍️ *Instrucciones:*  
+Ingresá una frase sin puntuación ni mayúsculas, por ejemplo:  
+`hola que lindo dia que hace no te parece`
+
+El modelo la corregirá automáticamente:  
+`Hola, qué lindo día que hace, ¿no te parece?`
+""")
+
+st.markdown("""
+    <style>
+    input[type="text"] {
+        text-transform: lowercase;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 sentence = st.text_input("Ingresá texto:")
 sentence = sentence.lower()
 
 if sentence:
     result = predict_and_reconstruct(model, sentence.lower(), tokenizer)
-    st.write("**Resultado:**", result)
+    st.write("**Resultado Modelo:**", result)
     
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -73,9 +91,11 @@ if sentence:
         ),
     )
     if response and response.text:
-        st.write("**Resultado segun Gemini:**", response.text)
+        st.write("**Resultado Gemini 2.5 Flash:**", response.text)
 
 
-    if st.button("Predijo mal la RNN"):
+    st.markdown("💡 ¿El resultado no fue correcto? Podés enviarnos tu feedback con el botón de abajo:")
+
+    if st.button("📬 Enviar feedback: el modelo se equivocó"):
         save_feedback(sentence, result)
-        st.success(f"Feedback guardado!")
+        st.success("✅ ¡Gracias! Tu feedback fue guardado.")
