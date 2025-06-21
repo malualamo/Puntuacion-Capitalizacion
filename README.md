@@ -9,3 +9,8 @@ Como algunos modelos tardan en entrenar aprovechamos y exportamos los pesos con 
     2. defino los `weight =` para cada uno para ponderar el costo de error para las clases desbalanceadas. 
     3. des-freezeo las ultimas 2 capas de BERT y su pooler para "fine-tunear" a BERT
     4. guarde en un .pt los modelos pero son pesados para subirlos a git
+
+- 21/06 male:
+
+    1. agrego datasets de dialogos de peliculas
+    2. modifico la funcion de evaluacion para incluir reporte de clasificacion (revisar por qué se rompe)
