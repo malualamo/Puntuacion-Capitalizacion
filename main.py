@@ -56,6 +56,7 @@ tokenizer = load_tokenizer()
 
 st.title("Reconstrucción de Texto con Puntuación y Capitalización")
 sentence = st.text_input("Ingresá texto:")
+sentence = sentence.lower()
 
 if sentence:
     result = predict_and_reconstruct(model, sentence.lower(), tokenizer)
