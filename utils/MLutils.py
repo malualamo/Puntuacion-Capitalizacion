@@ -114,3 +114,68 @@ def evaluate(model, dataloader, device):
     print(classification_report(all_true_cap, all_pred_cap, target_names=[inv_cap[i] for i in range(len(inv_cap))]))
 
     return punct_acc, cap_acc
+
+from collections import Counter
+import torch
+
+def compute_class_weights(
+    dataloader,
+    num_punct_classes: int,
+    num_cap_classes: int,
+    device,
+    beta: float = 0.7,
+    ignore_index: int = -100,
+    clamp_min: float = 1.0,
+    clamp_max: float = 5.0
+):
+    """
+    Recorre el dataloader para contar ocurrencias de cada etiqueta (ignorando ignore_index),
+    calcula los pesos inversos elevados a beta, y devuelve dos tensores de peso
+    para CrossEntropyLoss (puntuación y capitalización).
+    """
+    punct_counter = Counter()
+    cap_counter   = Counter()
+
+    # 1) contar etiquetas
+    for _, _, punct_labels, cap_labels in dataloader:
+        pl = punct_labels.cpu().numpy().ravel()
+        cl = cap_labels.cpu().numpy().ravel()
+
+        valid_p = pl[pl != ignore_index]
+        valid_c = cl[cl != ignore_index]
+
+        punct_counter.update(valid_p)
+        cap_counter.update(valid_c)
+
+    total_p = sum(punct_counter.values())
+    total_c = sum(cap_counter.values())
+
+    # 2) calcular pesos inversos^beta
+    punct_weights = {
+        tag: (total_p / count) ** beta
+        for tag, count in punct_counter.items()
+    }
+    cap_weights = {
+        tag: (total_c / count) ** beta
+        for tag, count in cap_counter.items()
+    }
+
+    # 3) tensor con clamp
+    punct_w_tensor = (
+        torch.tensor(
+            [punct_weights.get(i, 1.0) for i in range(num_punct_classes)],
+            dtype=torch.float32
+        )
+        .to(device)
+        .clamp(min=clamp_min, max=clamp_max)
+    )
+    cap_w_tensor = (
+        torch.tensor(
+            [cap_weights.get(i, 1.0) for i in range(num_cap_classes)],
+            dtype=torch.float32
+        )
+        .to(device)
+        .clamp(min=clamp_min, max=clamp_max)
+    )
+
+    return punct_w_tensor, cap_w_tensor

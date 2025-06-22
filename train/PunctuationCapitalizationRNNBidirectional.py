@@ -1,7 +1,7 @@
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-class PunctuationCapitalizationRNNBidireccional(nn.Module):
+class PunctuationCapitalizationRNNBidirectional(nn.Module):
     def __init__(self, bert_model, hidden_dim, num_punct_classes, num_cap_classes, dropout=0.3):
         super().__init__()
         self.bert = bert_model  # Modelo BERT preentrenado
