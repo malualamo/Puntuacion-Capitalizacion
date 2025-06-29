@@ -47,28 +47,38 @@ class PunctuationCapitalizationRNNBidirectionalAttention(nn.Module):
         )
 
     def forward(self, input_ids, attention_mask=None):
-        outputs = self.bert(input_ids, attention_mask=attention_mask)
-        x = self.projection(outputs.last_hidden_state)
+            bert_out = self.bert(input_ids, attention_mask=attention_mask)
+            x = self.projection(bert_out.last_hidden_state)       # [B, T, hidden_dim]
 
-        if attention_mask is not None:
-            lengths = attention_mask.sum(dim=1).cpu()
-            x, _ = self.lstm1(pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False))
-            x, _ = pad_packed_sequence(x, batch_first=True, total_length=attention_mask.size(1))
-        else:
-            x, _ = self.lstm1(x)
+            if attention_mask is not None:
+                lengths = attention_mask.sum(dim=1).cpu()
+                packed = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
+                packed1, _ = self.lstm1(packed)
+                x, _ = pad_packed_sequence(packed1, batch_first=True,
+                                        total_length=attention_mask.size(1))
+            else:
+                x, _ = self.lstm1(x)
 
-        attn_out, _ = self.attention(x, x, x)
+            if attention_mask is not None:
+                key_padding_mask = attention_mask == 0
+            else:
+                key_padding_mask = None
 
-        if attention_mask is not None:
-            attn_out, _ = self.lstm2(pack_padded_sequence(attn_out, lengths, batch_first=True, enforce_sorted=False))
-            x, _ = pad_packed_sequence(attn_out, batch_first=True, total_length=attention_mask.size(1))
-        else:
-            x, _ = self.lstm2(attn_out)
+            attn_out, _ = self.attention(
+                x, x, x,
+                key_padding_mask=key_padding_mask
+            )
 
-        x = self.dropout(x)
+            if attention_mask is not None:
+                packed2 = pack_padded_sequence(attn_out, lengths, batch_first=True, enforce_sorted=False)
+                packed3, _ = self.lstm2(packed2)
+                x, _ = pad_packed_sequence(packed3, batch_first=True,
+                                        total_length=attention_mask.size(1))
+            else:
+                x, _ = self.lstm2(attn_out)
 
-        # 4) Final classifiers
-        punct_logits = self.punct_classifier(x)
-        cap_logits   = self.cap_classifier(x)
+            x = self.dropout(x)
 
-        return punct_logits, cap_logits
+            punct_logits = self.punct_classifier(x)
+            cap_logits   = self.cap_classifier(x)
+            return punct_logits, cap_logits
