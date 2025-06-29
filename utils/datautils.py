@@ -366,3 +366,40 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
         final_words.append(word)
 
     return " ".join(final_words)
+
+
+
+def random_forest_predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, verbose=True):
+    encoding = tokenizer(
+        sentence,
+        return_tensors='pt',
+        padding='max_length',
+        truncation=True,
+        max_length=max_length,
+        return_attention_mask=True,
+        return_token_type_ids=False
+    )
+
+    words = sentence.split()
+    for word in words:
+        tokens = tokenizer.tokenize(word)
+        preds = []
+        for token in tokens:
+
+            print(f"Token: {token}")
+            #if token.startswith("##"):
+            #    continue
+            # model is a scikit-learn rf model
+            cap_pred = model.predict([tokenizer.convert_tokens_to_ids(token)])[0]
+            preds.append(cap_pred)
+        # Reemplazar el token original por el token con la capitalización predicha de mayor ocurrencia
+        if preds:
+            most_common_cap = max(set(preds), key=preds.count)
+            if most_common_cap == 1:
+                word = word.capitalize()
+            elif most_common_cap == 2:
+                word = ''.join(c.upper() if random.random() > 0.5 else c.lower() for c in word)
+            elif most_common_cap == 3:
+                word = word.upper()
+        sentence = sentence.replace(word, word, 1)
+    return sentence
