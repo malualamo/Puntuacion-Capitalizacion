@@ -314,7 +314,6 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
     current_word = ""
     current_cap = 0
     current_punct = 0
-    new_word = True
 
     if verbose == True:
         print("\n🔍 Predicción token por token:")
