@@ -8,7 +8,8 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 import wikipedia
 
-PUNCT_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3, "¿": 4}
+PUNCT_END_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3}
+PUNCT_START_TAGS = {"Ø": 0, "¿": 1}
 CAP_TAGS = {"lower": 0, "init": 1, "mix": 2, "upper": 3}
 
 def tiene_acento(word):
@@ -38,33 +39,31 @@ def get_cap_labels_for_tokens(labels_per_word, token_word_map):
             labels.append(labels_per_word[word_idx])
     return labels
 
-def get_punct_labels_for_tokens(labels_per_word, token_word_map):
-    """
-    Asigna etiquetas de puntuación a los subtokens, siguiendo las reglas:
-    - ¿ va en el primer subtoken de la palabra.
-    - ., ?, , van en el último subtoken de la palabra.
-    - Ø no se asigna a ningún subtoken (todos -100).
-    """
+def get_punct_start_labels_for_tokens(labels_per_word, token_word_map):
     labels = [0] * len(token_word_map)
     word_to_token_idxs = {}
-
-    # Construimos un diccionario: word_idx -> [lista de posiciones de tokens]
     for token_idx, word_idx in enumerate(token_word_map):
         if word_idx is not None:
             word_to_token_idxs.setdefault(word_idx, []).append(token_idx)
-
     for word_idx, token_idxs in word_to_token_idxs.items():
         punct_label = labels_per_word[word_idx]
-        if punct_label == PUNCT_TAGS["¿"]:
-            target_idx = token_idxs[0]  # primer subtoken
-        elif punct_label in {PUNCT_TAGS["."], PUNCT_TAGS[","], PUNCT_TAGS["?"]}:
-            target_idx = token_idxs[-1]  # último subtoken
-        else:
-            continue  # Ø: no se asigna nada
-
-        labels[target_idx] = punct_label
-
+        # Puntuacion inicial va en primer subtoken
+        labels[token_idxs[0]] = punct_label
     return labels
+
+
+def get_punct_end_labels_for_tokens(labels_per_word, token_word_map):
+    labels = [0] * len(token_word_map)
+    word_to_token_idxs = {}
+    for token_idx, word_idx in enumerate(token_word_map):
+        if word_idx is not None:
+            word_to_token_idxs.setdefault(word_idx, []).append(token_idx)
+    for word_idx, token_idxs in word_to_token_idxs.items():
+        punct_label = labels_per_word[word_idx]
+        # Puntuacion final va en último subtoken
+        labels[token_idxs[-1]] = punct_label
+    return labels
+
 
 def get_dataloader(oraciones_raw, max_length, batch_size, device, tokenizer):
     """
@@ -90,14 +89,16 @@ def get_dataloader(oraciones_raw, max_length, batch_size, device, tokenizer):
     """
     input_ids_list = []
     attention_masks = []
-    punct_labels_list = []
+    punct_start_labels_list = []
+    punct_end_labels_list = []
     cap_labels_list = []
 
     for sent in oraciones_raw:
         # Extraer palabras con puntuación
         matches = list(re.finditer(r"\b\w+[^\s\w]?\b", sent)) # Detecta puntuaciones y las splitea
         words = []
-        punct_labels = []
+        punct_start_labels = []
+        punct_end_labels = []
         cap_labels = []
 
         for i, m in enumerate(matches): # Recorre cada palabra detectada
@@ -107,12 +108,17 @@ def get_dataloader(oraciones_raw, max_length, batch_size, device, tokenizer):
             # Puntuación
             before = sent[m.start() - 1] if m.start() > 0 else "" # Signo anterior
             after = sent[m.end()] if m.end() < len(sent) else ""  # Signo posterior
-            if before == '¿':
-                punct = PUNCT_TAGS["¿"]
-            elif after in PUNCT_TAGS:
-                punct = PUNCT_TAGS[after]
+            # Puntuación inicial (signo antes)
+            if before in PUNCT_START_TAGS:
+                punct_start = PUNCT_START_TAGS[before]
             else:
-                punct = PUNCT_TAGS["Ø"]
+                punct_start = PUNCT_START_TAGS["Ø"]
+
+            # Puntuación final (signo después)
+            if after in PUNCT_END_TAGS:
+                punct_end = PUNCT_END_TAGS[after]
+            else:
+                punct_end = PUNCT_END_TAGS["Ø"]
 
             # Capitalización
             cap = _get_capitalization_type(word_raw)
@@ -120,7 +126,8 @@ def get_dataloader(oraciones_raw, max_length, batch_size, device, tokenizer):
             clean_word = clean_word.lower() # Limpia la palabra Hola -> hola
 
             words.append(clean_word)
-            punct_labels.append(punct)
+            punct_start_labels.append(punct_start)
+            punct_end_labels.append(punct_end)
             cap_labels.append(cap)
 
         # Tokenización con BERT
@@ -138,30 +145,35 @@ def get_dataloader(oraciones_raw, max_length, batch_size, device, tokenizer):
         word_ids = encoding.word_ids(batch_index=0)  # Mapea cada subtoken a su palabra
 
         # Alinear etiquetas a subtokens (hasta ahora las teniamos en palabras)
-        punct_labels_aligned = get_punct_labels_for_tokens(punct_labels, word_ids)
+        punct_start_labels_aligned = get_punct_start_labels_for_tokens(punct_start_labels, word_ids)
+        punct_end_labels_aligned = get_punct_end_labels_for_tokens(punct_end_labels, word_ids)
         cap_labels_aligned = get_cap_labels_for_tokens(cap_labels, word_ids)
 
         # Convertir a tensores
-        punct_tensor = torch.tensor(punct_labels_aligned)
+        punct_start_tensor = torch.tensor(punct_start_labels_aligned)
+        punct_end_tensor = torch.tensor(punct_end_labels_aligned)
         cap_tensor = torch.tensor(cap_labels_aligned)
 
         # Aplicar -100 a posiciones de padding
-        punct_tensor[attention_mask == 0] = -100
+        punct_start_tensor[attention_mask == 0] = -100
+        punct_end_tensor[attention_mask == 0] = -100
         cap_tensor[attention_mask == 0] = -100
 
         # Agregar a listas (por oracion)
         input_ids_list.append(input_ids)
         attention_masks.append(attention_mask)
-        punct_labels_list.append(punct_tensor)
+        punct_start_labels_list.append(punct_start_tensor)
+        punct_end_labels_list.append(punct_end_tensor)
         cap_labels_list.append(cap_tensor)
 
     # Stackear tensores (por batch)
-    input_ids = torch.stack(input_ids_list).to(device)
-    attention_masks = torch.stack(attention_masks).to(device)
-    punct_labels = torch.stack(punct_labels_list).to(device)
-    cap_labels = torch.stack(cap_labels_list).to(device)
+    input_ids        = torch.stack(input_ids_list).to(device)
+    attention_masks  = torch.stack(attention_masks).to(device)
+    punct_start_labels = torch.stack(punct_start_labels_list).to(device)
+    punct_end_labels   = torch.stack(punct_end_labels_list).to(device)
+    cap_labels         = torch.stack(cap_labels_list).to(device)
 
-    dataset = TensorDataset(input_ids, attention_masks, punct_labels, cap_labels)
+    dataset = TensorDataset(input_ids, attention_masks, punct_start_labels, punct_end_labels, cap_labels)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     return dataloader
@@ -303,24 +315,30 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
     attention_mask = encoding['attention_mask'].to(device)
 
     with torch.no_grad():
-        punct_logits, cap_logits = model(input_ids, attention_mask=attention_mask)
+        # 🔄 Ahora el modelo devuelve 3 salidas: puntuación inicial, final y capitalización
+        punct_start_logits, punct_end_logits, cap_logits = model(input_ids, attention_mask=attention_mask)
 
-    pred_punct = torch.argmax(punct_logits, dim=-1)[0].cpu().tolist()
-    pred_cap = torch.argmax(cap_logits, dim=-1)[0].cpu().tolist()
+    # 🔍 Tomamos la predicción más probable (argmax) para cada token
+    pred_punct_start = torch.argmax(punct_start_logits, dim=-1)[0].cpu().tolist()
+    pred_punct_end   = torch.argmax(punct_end_logits, dim=-1)[0].cpu().tolist()
+    pred_cap         = torch.argmax(cap_logits, dim=-1)[0].cpu().tolist()
     tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
-    INV_PUNCT_TAGS = {v: k for k, v in PUNCT_TAGS.items()}
+
+    INV_PUNCT_START_TAGS = {v: k for k, v in PUNCT_START_TAGS.items()}
+    INV_PUNCT_END_TAGS   = {v: k for k, v in PUNCT_END_TAGS.items()}
 
     final_words = []
     current_word = ""
     current_cap = 0
-    current_punct = 0
+    current_punct_start = 0
+    current_punct_end = 0
 
     if verbose == True:
         print("\n🔍 Predicción token por token:")
-        print(f"{'TOKEN':15s} | {'PUNCT':>5s} | {'SIGNO':>5s} | {'CAP':>3s} | {'FINAL':15s}")
-        print("-" * 55)
+        print(f"{'TOKEN':15s} | {'P_START':>7s} | {'P_END':>5s} | {'CAP':>3s} | {'FINAL':15s}")
+        print("-" * 65)
 
-    for i, (token, punct_label, cap_label) in enumerate(zip(tokens, pred_punct, pred_cap)):
+    for i, (token, punct_start, punct_end, cap_label) in enumerate(zip(tokens, pred_punct_start, pred_punct_end, pred_cap)):
         if token in ["[CLS]", "[SEP]", "[PAD]"] or attention_mask[0, i].item() == 0:
             continue
 
@@ -328,8 +346,8 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
 
         if token.startswith("##"):
             current_word += clean_token
-            if punct_label != 0:
-                current_punct = punct_label  # usar puntuación del último subtoken relevante
+            if punct_end != 0:
+                current_punct_end = punct_end  # usar puntuación final del último subtoken relevante
         else:
             if current_word:
                 # cerrar palabra anterior
@@ -341,21 +359,29 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
                     word = ''.join(c.upper() if random.random() > 0.5 else c.lower() for c in word)
                 elif current_cap == 3:
                     word = word.upper()
-                # aplicar puntuación del último subtoken
-                punct = INV_PUNCT_TAGS.get(current_punct, "Ø")
-                if punct == "¿":
+
+                # aplicar puntuación inicial
+                punct_ini = INV_PUNCT_START_TAGS.get(current_punct_start, "Ø")
+                if punct_ini == "¿":
                     word = "¿" + word
-                elif punct != "Ø":
-                    word = word + punct
+                elif punct_ini != "Ø":
+                    word = punct_ini + word
+
+                # aplicar puntuación final
+                punct_fin = INV_PUNCT_END_TAGS.get(current_punct_end, "Ø")
+                if punct_fin != "Ø":
+                    word = word + punct_fin
+
                 final_words.append(word)
 
             # empezar nueva palabra
             current_word = clean_token
             current_cap = cap_label
-            current_punct = punct_label if punct_label != 0 else 0
+            current_punct_start = punct_start if punct_start != 0 else 0
+            current_punct_end   = punct_end if punct_end != 0 else 0
 
         if verbose:
-            print(f"{clean_token:15s} | {punct_label:5d} | {INV_PUNCT_TAGS.get(punct_label, 'Ø'):>5s} | {cap_label:3d} | {clean_token:15s}")
+            print(f"{clean_token:15s} | {INV_PUNCT_START_TAGS.get(punct_start, 'Ø'):>7s} | {INV_PUNCT_END_TAGS.get(punct_end, 'Ø'):>5s} | {cap_label:3d} | {clean_token:15s}")
 
     # Procesar última palabra
     if current_word:
@@ -366,11 +392,14 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
             word = ''.join(c.upper() if random.random() > 0.5 else c.lower() for c in word)
         elif current_cap == 3:
             word = word.upper()
-        punct = INV_PUNCT_TAGS.get(current_punct, "Ø")
-        if punct == "¿":
+        punct_ini = INV_PUNCT_START_TAGS.get(current_punct_start, "Ø")
+        if punct_ini == "¿":
             word = "¿" + word
-        elif punct != "Ø":
-            word = word + punct
+        elif punct_ini != "Ø":
+            word = punct_ini + word
+        punct_fin = INV_PUNCT_END_TAGS.get(current_punct_end, "Ø")
+        if punct_fin != "Ø":
+            word = word + punct_fin
         final_words.append(word)
 
     return " ".join(final_words)
@@ -588,3 +617,89 @@ def random_forest_predict_and_reconstruct(
 
     df = pd.DataFrame(rows)
     return df, " ".join(new_words)
+import csv
+
+def predicciones_TP(txt_path, model, tokenizer, device, max_length=128, verbose=False):
+    """
+    Procesa un archivo TXT con párrafos (una instancia por párrafo).
+    Devuelve un CSV con columnas:
+    instancia_id, token_id, token, punt_inicial, punt_final, capitalización
+
+    Parámetros:
+    - txt_path: ruta al archivo TXT.
+    - model: modelo entrenado con 3 cabezas.
+    - tokenizer: tokenizer BERT.
+    - device: 'cpu' o 'cuda'.
+    - max_length: max tokens por instancia.
+    - verbose: si imprime detalles.
+    """
+
+    model.eval()
+
+    INV_PUNCT_START_TAGS = {v:k for k,v in PUNCT_START_TAGS.items()}
+    INV_PUNCT_END_TAGS = {v:k for k,v in PUNCT_END_TAGS.items()}
+    INV_CAP_TAGS = {v:k for k,v in CAP_TAGS.items()}
+
+    results = []
+
+    with open(txt_path, 'r', encoding='utf-8') as f:
+        paragraphs = [p.strip() for p in f.read().split('\n\n') if p.strip()]
+
+    for instancia_id, paragraph in enumerate(paragraphs, start=1):
+        encoding = tokenizer(
+            paragraph,
+            return_tensors='pt',
+            padding='max_length',
+            truncation=True,
+            max_length=max_length,
+            return_attention_mask=True,
+            return_token_type_ids=False
+        )
+
+        input_ids = encoding['input_ids'].to(device)
+        attention_mask = encoding['attention_mask'].to(device)
+
+        with torch.no_grad():
+            # Suponiendo que el modelo devuelve 3 logits (punct_start, punct_end, cap)
+            punct_start_logits, punct_end_logits, cap_logits = model(input_ids, attention_mask=attention_mask)
+
+        pred_punct_start = torch.argmax(punct_start_logits, dim=-1)[0].cpu().tolist()
+        pred_punct_end = torch.argmax(punct_end_logits, dim=-1)[0].cpu().tolist()
+        pred_cap = torch.argmax(cap_logits, dim=-1)[0].cpu().tolist()
+
+        tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
+
+        if verbose:
+            print(f"\nInstancia {instancia_id}: {paragraph}")
+            print(f"{'Token ID':>8} | {'Token':15} | {'Punt Inicial':12} | {'Punt Final':10} | {'Capitalizacion':13}")
+            print("-"*70)
+
+        for token_id, (token, pstart, pend, cap) in enumerate(zip(tokens, pred_punct_start, pred_punct_end, pred_cap)):
+            # Ignorar tokens especiales y padding
+            if token in ["[CLS]", "[SEP]", "[PAD]"] or attention_mask[0, token_id].item() == 0:
+                continue
+
+            results.append({
+                'instancia_id': instancia_id,
+                'token_id': tokenizer.convert_tokens_to_ids(token),
+                'token': token,
+                'punt_inicial': INV_PUNCT_START_TAGS.get(pstart, ""),
+                'punt_final': INV_PUNCT_END_TAGS.get(pend, ""),
+                'capitalización': INV_CAP_TAGS.get(cap, "Ø")
+            })
+
+            if verbose:
+                print(f"{token_id:8} | {token:15} | {INV_PUNCT_START_TAGS.get(pstart, 'Ø'):12} | {INV_PUNCT_END_TAGS.get(pend, 'Ø'):10} | {INV_CAP_TAGS.get(cap, 'Ø'):13}")
+
+    # Guardar CSV
+    import pandas as pd
+    df = pd.DataFrame(results)
+    csv_path = txt_path.replace('.txt', '_predicciones.csv')
+    df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+
+    if verbose:
+        print(f"\nPredicciones guardadas en: {csv_path}")
+
+    return df
+
+
