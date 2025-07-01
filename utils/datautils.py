@@ -1,13 +1,22 @@
 
+from collections import Counter, defaultdict
 import json
 import random
 import re
+import pandas as pd
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 import wikipedia
 
 PUNCT_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3, "¿": 4}
 CAP_TAGS = {"lower": 0, "init": 1, "mix": 2, "upper": 3}
+
+def tiene_acento(word):
+    word = re.sub(r"ñ", "n", word).lower()
+    word = re.sub(r"#", "", word)
+    cleaned_word = word.encode("ascii", "ignore").decode("utf-8")
+    return word != cleaned_word
+
 
 def _get_capitalization_type(word):
     if not word or word.islower(): return 0
@@ -305,7 +314,6 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
     current_word = ""
     current_cap = 0
     current_punct = 0
-    new_word = True
 
     if verbose == True:
         print("\n🔍 Predicción token por token:")
@@ -366,3 +374,217 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
         final_words.append(word)
 
     return " ".join(final_words)
+
+
+
+def random_forest_predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, verbose=True):
+    encoding = tokenizer(
+        sentence,
+        return_tensors='pt',
+        padding='max_length',
+        truncation=True,
+        max_length=max_length,
+        return_attention_mask=True,
+        return_token_type_ids=False
+    )
+
+    words = sentence.split()
+    for word in words:
+        tokens = tokenizer.tokenize(word)
+        preds = []
+        for token in tokens:
+
+            print(f"Token: {token}")
+            #if token.startswith("##"):
+            #    continue
+            # model is a scikit-learn rf model
+            cap_pred = model.predict([tokenizer.convert_tokens_to_ids(token)])[0]
+            preds.append(cap_pred)
+        # Reemplazar el token original por el token con la capitalización predicha de mayor ocurrencia
+        if preds:
+            most_common_cap = max(set(preds), key=preds.count)
+            if most_common_cap == 1:
+                word = word.capitalize()
+            elif most_common_cap == 2:
+                word = ''.join(c.upper() if random.random() > 0.5 else c.lower() for c in word)
+            elif most_common_cap == 3:
+                word = word.upper()
+        sentence = sentence.replace(word, word, 1)
+    return sentence
+
+
+def procesar_oracion(sentence: str, tokenizer):
+    matches = list(re.finditer(r"\b(\w|' )+[^\s\w]?\b", sentence, flags=re.UNICODE))
+    original_words = [m.group(0) for m in matches]
+    cleaned_words = [re.sub(r"[^A-Za-zÀ-ÿ]", "", w).lower() for w in original_words]
+
+    encoding = tokenizer(
+        cleaned_words,
+        is_split_into_words=True,
+        return_attention_mask=True,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=128
+    )
+    tokens = tokenizer.convert_ids_to_tokens(encoding["input_ids"][0])
+    word_ids = encoding.word_ids(batch_index=0)
+
+    word_to_token_idxs = defaultdict(list)
+    for idx, wid in enumerate(word_ids):
+        if wid is not None:
+            word_to_token_idxs[wid].append(idx)
+
+    total = len(cleaned_words)
+    output = []
+    for idx, wid in enumerate(word_ids):
+        if wid is None:
+            continue
+
+        token = tokens[idx]
+        prev_tok = tokens[idx-1] if idx > 0 else None
+        next_tok = tokens[idx+1] if idx < len(tokens)-1 else None
+
+        is_first = idx == word_to_token_idxs[wid][0]
+        is_last = idx == word_to_token_idxs[wid][-1]
+
+        has_accent = int(any(c in original_words[wid] for c in "áéíóúÁÉÍÓÚñÑüÜ"))
+        pos_norm = round(wid / (total - 1), 2) if total > 1 else 0.0
+
+        lead_char = sentence[matches[wid].start() - 1] if matches[wid].start() > 0 else 'Ø'
+        start_punc = PUNCT_TAGS.get(lead_char, 0) if is_first else 0
+
+        trail_char = sentence[matches[wid].end()] if matches[wid].end() < len(sentence) else 'Ø'
+        end_punc = PUNCT_TAGS.get(trail_char, 0) if is_last else 0
+        cap_type = _get_capitalization_type(original_words[wid].strip("¿?.,"))
+
+        output.append({
+            "word": cleaned_words[wid],
+            "token": tokenizer.convert_tokens_to_ids(token),
+            "prev_token": tokenizer.convert_tokens_to_ids(prev_tok) if prev_tok and prev_tok != '[CLS]' else -1,
+            "next_token": tokenizer.convert_tokens_to_ids(next_tok) if next_tok and next_tok != '[SEP]' else -1,
+            "has_accent": has_accent,
+            "position": pos_norm,
+            "starting_punctuation_type": start_punc,
+            "ending_punctuation_type": end_punc,
+            "capitalization_type": cap_type,
+        })
+
+    return output
+
+def undersample(
+    X,
+    y,
+    freq,
+):
+    idx_by_class = defaultdict(list)
+    for i, label in enumerate(y):
+        idx_by_class[label].append(i)
+
+    selected_idxs = []
+    rnd = random.Random(42)
+    for cls, indices in idx_by_class.items():
+        if cls in freq:
+            desired = freq[cls]
+            available = len(indices)
+            if desired > available:
+                desired = available
+            chosen = rnd.sample(indices, desired)
+        else:
+            chosen = list(indices)
+        selected_idxs.extend(chosen)
+
+    rnd.shuffle(selected_idxs)
+    X_res = [X[i] for i in selected_idxs]
+    y_res = [y[i] for i in selected_idxs]
+    return X_res, y_res
+
+ACCENT_RE = re.compile(r"[áéíóúÁÉÍÓÚñÑüÜ]")
+DEFAULT_PUNCT_MAP = {0: "", 1: ",", 2: ".", 3: "?", 4: "¿"}
+brands = {"mcdonald's": "McDonald's",}
+
+def random_forest_predict_and_reconstruct(
+    cap_model,
+    punct_start_model,
+    punct_end_model,
+    sentence,
+    tokenizer,
+    punct_map = None,
+    verbose = False
+):
+    if punct_map is None:
+        punct_map = DEFAULT_PUNCT_MAP
+
+    flat_toks = tokenizer.tokenize(sentence)
+    total = len(flat_toks)
+    denom = total - 1 if total > 1 else 1
+    ptr = 0
+    rows = []
+    instance_id = 1
+    new_words = []
+    for word in sentence.split():
+        subtoks = tokenizer.tokenize(word)
+        caps_preds = []
+        start_pred = 0
+        end_pred = 0
+
+        for i in range(len(subtoks)):
+            tok = flat_toks[ptr]
+            if verbose:
+                print("Token:", tok)
+            tok_id = tokenizer.convert_tokens_to_ids(tok)
+            has_accent = 1 if ACCENT_RE.search(tok) else 0
+            norm_pos = ptr / denom
+            next_tok = tokenizer.convert_tokens_to_ids(flat_toks[ptr + 1]) if ptr + 1 < len(flat_toks) else -1
+            prev_tok = tokenizer.convert_tokens_to_ids(flat_toks[ptr - 1]) if ptr > 0 else -1
+            feats = [tok_id, prev_tok, next_tok, has_accent, norm_pos]
+            caps_preds.append(cap_model.predict([feats])[0])
+            if i == 0:
+                start_pred = punct_start_model.predict([feats])[0]
+            if i == len(subtoks) - 1:
+                end_pred = punct_end_model.predict([feats])[0]
+            ptr += 1
+
+        counter = Counter(caps_preds)
+        if caps_preds[0] == 1:
+            cap_choice = 1
+        elif counter.get(2, 0) > 1:
+            cap_choice = 2
+        else:
+            cap_choice = counter.most_common(1)[0][0]
+
+        if cap_choice == 1:
+            mod = word.capitalize()
+        elif cap_choice == 2:
+            if word.lower() in brands:
+                mod = brands[word.lower()]
+            else:
+                mod = "".join(
+                    c.upper() if random.random() > 0.5 else c.lower()
+                    for c in word
+                )
+        elif cap_choice == 3:
+            mod = word.upper()
+        else:
+            mod = word
+
+        prefix = punct_map.get(start_pred, "")
+        suffix = punct_map.get(end_pred,   "")
+        mod = f"{prefix}{mod}{suffix}"
+
+        new_words.append(mod)
+
+        for idx, tok in enumerate(subtoks):
+            token_id = tokenizer.convert_tokens_to_ids(flat_toks[ptr - len(subtoks) + idx])
+            rows.append({
+                "instancia_id": instance_id,
+                "token_id": token_id,
+                "token": tok,
+                "punt_inicial": start_pred if idx == 0 else 0,
+                "punt_final": end_pred if idx == len(subtoks) - 1 else 0,
+                "capitalización": cap_choice
+            })
+        instance_id += 1
+
+    df = pd.DataFrame(rows)
+    return df, " ".join(new_words)
