@@ -617,3 +617,89 @@ def random_forest_predict_and_reconstruct(
 
     df = pd.DataFrame(rows)
     return df, " ".join(new_words)
+import csv
+
+def predicciones_TP(txt_path, model, tokenizer, device, max_length=128, verbose=False):
+    """
+    Procesa un archivo TXT con párrafos (una instancia por párrafo).
+    Devuelve un CSV con columnas:
+    instancia_id, token_id, token, punt_inicial, punt_final, capitalización
+
+    Parámetros:
+    - txt_path: ruta al archivo TXT.
+    - model: modelo entrenado con 3 cabezas.
+    - tokenizer: tokenizer BERT.
+    - device: 'cpu' o 'cuda'.
+    - max_length: max tokens por instancia.
+    - verbose: si imprime detalles.
+    """
+
+    model.eval()
+
+    INV_PUNCT_START_TAGS = {v:k for k,v in PUNCT_START_TAGS.items()}
+    INV_PUNCT_END_TAGS = {v:k for k,v in PUNCT_END_TAGS.items()}
+    INV_CAP_TAGS = {v:k for k,v in CAP_TAGS.items()}
+
+    results = []
+
+    with open(txt_path, 'r', encoding='utf-8') as f:
+        paragraphs = [p.strip() for p in f.read().split('\n\n') if p.strip()]
+
+    for instancia_id, paragraph in enumerate(paragraphs, start=1):
+        encoding = tokenizer(
+            paragraph,
+            return_tensors='pt',
+            padding='max_length',
+            truncation=True,
+            max_length=max_length,
+            return_attention_mask=True,
+            return_token_type_ids=False
+        )
+
+        input_ids = encoding['input_ids'].to(device)
+        attention_mask = encoding['attention_mask'].to(device)
+
+        with torch.no_grad():
+            # Suponiendo que el modelo devuelve 3 logits (punct_start, punct_end, cap)
+            punct_start_logits, punct_end_logits, cap_logits = model(input_ids, attention_mask=attention_mask)
+
+        pred_punct_start = torch.argmax(punct_start_logits, dim=-1)[0].cpu().tolist()
+        pred_punct_end = torch.argmax(punct_end_logits, dim=-1)[0].cpu().tolist()
+        pred_cap = torch.argmax(cap_logits, dim=-1)[0].cpu().tolist()
+
+        tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
+
+        if verbose:
+            print(f"\nInstancia {instancia_id}: {paragraph}")
+            print(f"{'Token ID':>8} | {'Token':15} | {'Punt Inicial':12} | {'Punt Final':10} | {'Capitalizacion':13}")
+            print("-"*70)
+
+        for token_id, (token, pstart, pend, cap) in enumerate(zip(tokens, pred_punct_start, pred_punct_end, pred_cap)):
+            # Ignorar tokens especiales y padding
+            if token in ["[CLS]", "[SEP]", "[PAD]"] or attention_mask[0, token_id].item() == 0:
+                continue
+
+            results.append({
+                'instancia_id': instancia_id,
+                'token_id': tokenizer.convert_tokens_to_ids(token),
+                'token': token,
+                'punt_inicial': INV_PUNCT_START_TAGS.get(pstart, ""),
+                'punt_final': INV_PUNCT_END_TAGS.get(pend, ""),
+                'capitalización': INV_CAP_TAGS.get(cap, "Ø")
+            })
+
+            if verbose:
+                print(f"{token_id:8} | {token:15} | {INV_PUNCT_START_TAGS.get(pstart, 'Ø'):12} | {INV_PUNCT_END_TAGS.get(pend, 'Ø'):10} | {INV_CAP_TAGS.get(cap, 'Ø'):13}")
+
+    # Guardar CSV
+    import pandas as pd
+    df = pd.DataFrame(results)
+    csv_path = txt_path.replace('.txt', '_predicciones.csv')
+    df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+
+    if verbose:
+        print(f"\nPredicciones guardadas en: {csv_path}")
+
+    return df
+
+
