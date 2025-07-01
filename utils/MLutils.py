@@ -2,9 +2,9 @@ import numpy as np
 import torch
 from sklearn.metrics import classification_report
 
-PUNCT_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3, "¿": 4}
+PUNCT_END_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3}
+PUNCT_START_TAGS = {"Ø": 0, "¿": 1}
 CAP_TAGS = {"lower": 0, "init": 1, "mix": 2, "upper": 3}
-
 
 def train(model, dataloader_train, dataloader_test, optimizer,
           criterion_start, criterion_end, criterion_cap, device, epochs=3):
@@ -46,63 +46,55 @@ def evaluate(model, dataloader, device):
     model.eval()
 
     inv_start = {v: k for k, v in PUNCT_START_TAGS.items()}
-    inv_end = {v: k for k, v in PUNCT_END_TAGS.items()}
-    inv_cap = {v: k for k, v in CAP_TAGS.items()}
+    inv_end   = {v: k for k, v in PUNCT_END_TAGS.items()}
+    inv_cap   = {v: k for k, v in CAP_TAGS.items()}
 
     all_true_start, all_pred_start = [], []
-    all_true_end, all_pred_end = [], []
-    all_true_cap, all_pred_cap = [], []
+    all_true_end,   all_pred_end   = [], []
+    all_true_cap,   all_pred_cap   = [], []
 
     with torch.no_grad():
         for input_ids, attention_mask, punct_start_labels, punct_end_labels, cap_labels in dataloader:
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
-            punct_start_labels = punct_start_labels.to(device)
-            punct_end_labels = punct_end_labels.to(device)
-            cap_labels = cap_labels.to(device)
 
             punct_start_logits, punct_end_logits, cap_logits = model(input_ids, attention_mask)
+            pred_start = punct_start_logits.argmax(dim=-1)
+            pred_end   = punct_end_logits.argmax(dim=-1)
+            pred_cap   = cap_logits.argmax(dim=-1)
 
-            pred_start = torch.argmax(punct_start_logits, dim=-1)
-            pred_end = torch.argmax(punct_end_logits, dim=-1)
-            pred_cap = torch.argmax(cap_logits, dim=-1)
+            mask_start = (punct_start_labels != -100)
+            mask_end   = (punct_end_labels   != -100)
+            mask_cap   = (cap_labels         != -100)
 
-            # Máscara para ignorar padding
-            mask = (punct_start_labels != -100)
+            ts = punct_start_labels[mask_start].cpu().numpy()
+            ps = pred_start[mask_start].cpu().numpy()
+            all_true_start.extend(ts)
+            all_pred_start.extend(ps)
 
-            all_true_start.extend(punct_start_labels[mask].cpu().numpy())
-            all_pred_start.extend(pred_start[mask].cpu().numpy())
+            te = punct_end_labels[mask_end].cpu().numpy()
+            pe = pred_end[mask_end].cpu().numpy()
+            all_true_end.extend(te)
+            all_pred_end.extend(pe)
 
-            all_true_end.extend(punct_end_labels[mask].cpu().numpy())
-            all_pred_end.extend(pred_end[mask].cpu().numpy())
+            tc = cap_labels[mask_cap].cpu().numpy()
+            pc = pred_cap[mask_cap].cpu().numpy()
+            all_true_cap.extend(tc)
+            all_pred_cap.extend(pc)
 
-            all_true_cap.extend(cap_labels[mask].cpu().numpy())
-            all_pred_cap.extend(pred_cap[mask].cpu().numpy())
+    print(f"Start Acc: {np.mean(np.array(all_true_start)==np.array(all_pred_start)):.4f}")
+    print(f"End   Acc: {np.mean(np.array(all_true_end)==np.array(all_pred_end)):.4f}")
+    print(f"Cap   Acc: {np.mean(np.array(all_true_cap)==np.array(all_pred_cap)):.4f}")
 
-    print("📌 Start Punctuation Accuracy: {:.4f}".format(
-        np.mean(np.array(all_true_start) == np.array(all_pred_start))))
-    print("📍 End Punctuation Accuracy:   {:.4f}".format(
-        np.mean(np.array(all_true_end) == np.array(all_pred_end))))
-    print("🔡 Capitalization Accuracy:    {:.4f}".format(
-        np.mean(np.array(all_true_cap) == np.array(all_pred_cap))))
-
-    print("\n📊 Start Punctuation Classification Report:")
+    print("\nStart report:")
     print(classification_report(all_true_start, all_pred_start,
-                                target_names=[inv_start[i] for i in range(len(inv_start))]))
-
-    print("\n📊 End Punctuation Classification Report:")
+                                target_names=[inv_start[i] for i in sorted(inv_start)]))
+    print("\nEnd report:")
     print(classification_report(all_true_end, all_pred_end,
-                                target_names=[inv_end[i] for i in range(len(inv_end))]))
-
-    print("\n📊 Capitalization Classification Report:")
+                                target_names=[inv_end[i]   for i in sorted(inv_end)]))
+    print("\nCap report:")
     print(classification_report(all_true_cap, all_pred_cap,
-                                target_names=[inv_cap[i] for i in range(len(inv_cap))]))
-
-    return (
-        np.mean(np.array(all_true_start) == np.array(all_pred_start)),
-        np.mean(np.array(all_true_end) == np.array(all_pred_end)),
-        np.mean(np.array(all_true_cap) == np.array(all_pred_cap)),
-    )
+                                target_names=[inv_cap[i]   for i in sorted(inv_cap)]))
 
 
 from collections import Counter

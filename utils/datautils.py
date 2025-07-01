@@ -9,7 +9,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import wikipedia
 
 PUNCT_END_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3}
-PUNCT_START_TAGS = {"Ø": 0, "¿": 4}
+PUNCT_START_TAGS = {"Ø": 0, "¿": 1}
 CAP_TAGS = {"lower": 0, "init": 1, "mix": 2, "upper": 3}
 
 def tiene_acento(word):

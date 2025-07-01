@@ -4,7 +4,7 @@ import json
 
 import wikipedia
 
-from utils.datautils import extraer_frases_dialogo, extraer_frases_subtitulos, limpiar_simbolos, obtener_frases_wikipedia
+from utils.datautils import extraer_frases_dialogo, extraer_frases_subtitulos, limpiar_simbolos
 
 def get_questions():
     DATA_URLS = {
