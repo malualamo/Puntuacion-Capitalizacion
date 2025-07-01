@@ -6,114 +6,104 @@ PUNCT_TAGS = {"Ø": 0, ",": 1, ".": 2, "?": 3, "¿": 4}
 CAP_TAGS = {"lower": 0, "init": 1, "mix": 2, "upper": 3}
 
 
-def train(model, dataloader_train, dataloader_test, optimizer, criterion_punct, criterion_cap, device, epochs=3):
+def train(model, dataloader_train, dataloader_test, optimizer,
+          criterion_start, criterion_end, criterion_cap, device, epochs=3):
+    
     for epoch in range(epochs):
         model.train()
         total_loss = 0
 
-        for input_ids, attention_mask, punct_labels, cap_labels in dataloader_train:
+        for input_ids, attention_mask, punct_start_labels, punct_end_labels, cap_labels in dataloader_train:
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
-            punct_labels = punct_labels.to(device)
+            punct_start_labels = punct_start_labels.to(device)
+            punct_end_labels = punct_end_labels.to(device)
             cap_labels = cap_labels.to(device)
 
             optimizer.zero_grad()
 
-            punct_logits, cap_logits = model(input_ids, attention_mask)
+            punct_start_logits, punct_end_logits, cap_logits = model(input_ids, attention_mask)
 
-            loss_punct = criterion_punct(punct_logits.view(-1, punct_logits.shape[-1]), punct_labels.view(-1))
-            loss_cap = criterion_cap(cap_logits.view(-1, cap_logits.shape[-1]), cap_labels.view(-1))
+            loss_start = criterion_start(punct_start_logits.view(-1, punct_start_logits.shape[-1]),
+                                         punct_start_labels.view(-1))
+            loss_end = criterion_end(punct_end_logits.view(-1, punct_end_logits.shape[-1]),
+                                     punct_end_labels.view(-1))
+            loss_cap = criterion_cap(cap_logits.view(-1, cap_logits.shape[-1]),
+                                     cap_labels.view(-1))
 
-            loss = loss_punct + loss_cap
+            loss = loss_start + loss_end + loss_cap
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
 
         avg_train_loss = total_loss / len(dataloader_train)
-
-        """
-        # Evaluación en test
-        model.eval()
-        test_loss = 0
-        with torch.no_grad():
-            for input_ids, attention_mask, punct_labels, cap_labels in dataloader_test:
-                input_ids = input_ids.to(device)
-                attention_mask = attention_mask.to(device)
-                punct_labels = punct_labels.to(device)
-                cap_labels = cap_labels.to(device)
-
-                punct_logits, cap_logits = model(input_ids, attention_mask)
-
-                loss_punct = criterion(punct_logits.view(-1, punct_logits.shape[-1]), punct_labels.view(-1))
-                loss_cap = criterion(cap_logits.view(-1, cap_logits.shape[-1]), cap_labels.view(-1))
-
-                loss = loss_punct + loss_cap
-                test_loss += loss.item()
-
-        avg_test_loss = test_loss / len(dataloader_test)
-        """
-
         print(f"Epoch {epoch+1} | Train Loss: {avg_train_loss:.4f}")
+
 
 
 
 def evaluate(model, dataloader, device):
     model.eval()
 
-    inv_punct = {v: k for k, v in PUNCT_TAGS.items()}
+    inv_start = {v: k for k, v in PUNCT_START_TAGS.items()}
+    inv_end = {v: k for k, v in PUNCT_END_TAGS.items()}
     inv_cap = {v: k for k, v in CAP_TAGS.items()}
 
-    all_true_punct = []
-    all_pred_punct = []
-    all_true_cap = []
-    all_pred_cap = []
-
-
+    all_true_start, all_pred_start = [], []
+    all_true_end, all_pred_end = [], []
+    all_true_cap, all_pred_cap = [], []
 
     with torch.no_grad():
-        for input_ids, attention_mask, punct_labels, cap_labels in dataloader:
+        for input_ids, attention_mask, punct_start_labels, punct_end_labels, cap_labels in dataloader:
             input_ids = input_ids.to(device)
-            punct_labels = punct_labels.to(device)
+            attention_mask = attention_mask.to(device)
+            punct_start_labels = punct_start_labels.to(device)
+            punct_end_labels = punct_end_labels.to(device)
             cap_labels = cap_labels.to(device)
 
-            punct_logits, cap_logits = model(input_ids)
+            punct_start_logits, punct_end_logits, cap_logits = model(input_ids, attention_mask)
 
-            pred_punct = torch.argmax(punct_logits, dim=-1)
+            pred_start = torch.argmax(punct_start_logits, dim=-1)
+            pred_end = torch.argmax(punct_end_logits, dim=-1)
             pred_cap = torch.argmax(cap_logits, dim=-1)
 
-            # Máscara para ignorar tokens sin etiqueta
-            mask = (punct_labels != -100)
+            # Máscara para ignorar padding
+            mask = (punct_start_labels != -100)
 
-            # Aplicar máscara y aplanar para comparación
-            all_true_punct.extend(punct_labels[mask].cpu().numpy())
-            all_pred_punct.extend(pred_punct[mask].cpu().numpy())
+            all_true_start.extend(punct_start_labels[mask].cpu().numpy())
+            all_pred_start.extend(pred_start[mask].cpu().numpy())
+
+            all_true_end.extend(punct_end_labels[mask].cpu().numpy())
+            all_pred_end.extend(pred_end[mask].cpu().numpy())
 
             all_true_cap.extend(cap_labels[mask].cpu().numpy())
             all_pred_cap.extend(pred_cap[mask].cpu().numpy())
 
-    print("Unique classes in true labels:", set(all_true_cap))
-    print("Unique classes in predictions:", set(all_pred_cap))
+    print("📌 Start Punctuation Accuracy: {:.4f}".format(
+        np.mean(np.array(all_true_start) == np.array(all_pred_start))))
+    print("📍 End Punctuation Accuracy:   {:.4f}".format(
+        np.mean(np.array(all_true_end) == np.array(all_pred_end))))
+    print("🔡 Capitalization Accuracy:    {:.4f}".format(
+        np.mean(np.array(all_true_cap) == np.array(all_pred_cap))))
 
-    print("🔍 Unique true cap labels:", set(all_true_cap))
-    print("🔍 Unique pred cap labels:", set(all_pred_cap))
-    print("🔍 Unique true punct labels:", set(all_true_punct))
-    print("🔍 Unique pred punct labels:", set(all_pred_punct))
+    print("\n📊 Start Punctuation Classification Report:")
+    print(classification_report(all_true_start, all_pred_start,
+                                target_names=[inv_start[i] for i in range(len(inv_start))]))
 
-    # Accuracy generales
-    punct_acc = np.mean(np.array(all_true_punct) == np.array(all_pred_punct))
-    cap_acc = np.mean(np.array(all_true_cap) == np.array(all_pred_cap))
+    print("\n📊 End Punctuation Classification Report:")
+    print(classification_report(all_true_end, all_pred_end,
+                                target_names=[inv_end[i] for i in range(len(inv_end))]))
 
-    print("📌 Punctuation Accuracy:     {:.4f}".format(punct_acc))
-    print("🔡 Capitalization Accuracy: {:.4f}".format(cap_acc))
+    print("\n📊 Capitalization Classification Report:")
+    print(classification_report(all_true_cap, all_pred_cap,
+                                target_names=[inv_cap[i] for i in range(len(inv_cap))]))
 
-    # Reportes detallados
-    print("\n📊 Punctuation classification report:")
-    print(classification_report(all_true_punct, all_pred_punct, target_names=[inv_punct[i] for i in range(len(inv_punct))]))
+    return (
+        np.mean(np.array(all_true_start) == np.array(all_pred_start)),
+        np.mean(np.array(all_true_end) == np.array(all_pred_end)),
+        np.mean(np.array(all_true_cap) == np.array(all_pred_cap)),
+    )
 
-    print("\n📊 Capitalization classification report:")
-    print(classification_report(all_true_cap, all_pred_cap, target_names=[inv_cap[i] for i in range(len(inv_cap))]))
-
-    return punct_acc, cap_acc
 
 from collections import Counter
 import torch
