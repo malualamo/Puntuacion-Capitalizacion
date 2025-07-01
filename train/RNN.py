@@ -2,7 +2,7 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 class PunctuationCapitalizationRNN(nn.Module):
-    def __init__(self, bert_model, hidden_dim, num_punct_classes, num_cap_classes, dropout=0.3):
+    def __init__(self, bert_model, hidden_dim, num_punct_start_classes, num_punct_end_classes, num_cap_classes, dropout=0.3):
         super().__init__()
         self.bert = bert_model                        # ahora el modelo completo
         self.projection = nn.Linear(
@@ -11,12 +11,24 @@ class PunctuationCapitalizationRNN(nn.Module):
         self.rnn = nn.LSTM(hidden_dim, hidden_dim, num_layers=2,
                            batch_first=True, bidirectional=False)
         self.dropout = nn.Dropout(dropout)
-        self.punct_classifier = nn.Sequential(
+
+        # Cabeza puntuación inicial
+        self.punct_start_classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_punct_classes)
+            nn.Linear(hidden_dim, num_punct_start_classes)
         )
+
+        # Cabeza puntuación final
+        self.punct_end_classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_punct_end_classes)
+        )
+
+        # Cabeza capitalización
         self.cap_classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -44,6 +56,8 @@ class PunctuationCapitalizationRNN(nn.Module):
             rnn_out, _ = self.rnn(projected)
 
         rnn_out = self.dropout(rnn_out)
-        punct_logits = self.punct_classifier(rnn_out)
+        punct_start_logits = self.punct_start_classifier(rnn_out) # Logits puntuacion inicial
+        punct_end_logits = self.punct_end_classifier(rnn_out) # Logits puntuacion inicial
         cap_logits   = self.cap_classifier(rnn_out)
-        return punct_logits, cap_logits
+
+        return punct_start_logist, punct_end_logits, cap_logits
