@@ -60,4 +60,4 @@ class PunctuationCapitalizationRNN(nn.Module):
         punct_end_logits = self.punct_end_classifier(rnn_out) # Logits puntuacion inicial
         cap_logits   = self.cap_classifier(rnn_out)
 
-        return punct_start_logist, punct_end_logits, cap_logits
+        return punct_start_logits, punct_end_logits, cap_logits
