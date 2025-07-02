@@ -44,7 +44,7 @@ def get_notebook_dataset():
 
 def get_gemini_dataset():
     oraciones_sinteticas = []
-    with open('./data/datasets.json', 'r') as file:
+    with open('./data/datasets.json', 'r',encoding='utf-8') as file:
         data = json.load(file)
 
     oraciones_sinteticas = data['otros'] + data['marcas']

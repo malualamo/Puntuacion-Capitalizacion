@@ -2,7 +2,7 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 class PunctuationCapitalizationRNNBidirectionalAttention(nn.Module):
-    def __init__(self, bert_model, hidden_dim, num_punct_classes, num_cap_classes, dropout=0.3):
+    def __init__(self, bert_model, hidden_dim, num_punct_start_classes, num_punct_end_classes, num_cap_classes, dropout=0.3):
         super().__init__()
         self.bert = bert_model
         bert_dim = bert_model.config.hidden_size
@@ -33,11 +33,20 @@ class PunctuationCapitalizationRNNBidirectionalAttention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-        self.punct_classifier = nn.Sequential(
+        # Cabeza puntuación inicial
+        self.punct_start_classifier = nn.Sequential(
             nn.Linear(2 * hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_punct_classes),
+            nn.Linear(hidden_dim, num_punct_start_classes)
+        )
+
+        # Cabeza puntuación final
+        self.punct_end_classifier = nn.Sequential(
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_punct_end_classes)
         )
         self.cap_classifier = nn.Sequential(
             nn.Linear(2 * hidden_dim, hidden_dim),
@@ -79,6 +88,7 @@ class PunctuationCapitalizationRNNBidirectionalAttention(nn.Module):
 
             x = self.dropout(x)
 
-            punct_logits = self.punct_classifier(x)
+            punct_start_logits = self.punct_start_classifier(x) # Logits puntuacion inicial
+            punct_end_logits = self.punct_end_classifier(x) # Logits puntuacion inicial
             cap_logits   = self.cap_classifier(x)
-            return punct_logits, cap_logits
+            return punct_start_logits, punct_end_logits, cap_logits
