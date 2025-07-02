@@ -73,7 +73,7 @@ def get_dataloader(oraciones_raw, max_length, batch_size, device, tokenizer):
 
         for i, m in enumerate(matches): # Recorre cada palabra detectada
             word_raw = m.group(0) 
-            clean_word = re.sub(r"[.,?¿]", "", word_raw) # Limpia la palabra "Hola!" -> "Hola"
+            clean_word = re.sub(r"[.,?¿]", "", word_raw) # Limpia la palabra "Hola?" -> "Hola"
 
             # Puntuación
             before = sent[m.start() - 1] if m.start() > 0 else "" # Signo anterior
@@ -251,7 +251,7 @@ def extraer_frases_subtitulos(path_txt):
     if buffer:
         frases_limpias.append(buffer.strip())
 
-    print(f"✅ Se extrajeron {len(frases_limpias)} frases de Relatos Salvajes.")
+    print(f"Se extrajeron {len(frases_limpias)} frases de Relatos Salvajes.")
     return frases_limpias
 
 def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, verbose=True):
@@ -271,10 +271,8 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
     attention_mask = encoding['attention_mask'].to(device)
 
     with torch.no_grad():
-        # 🔄 Ahora el modelo devuelve 3 salidas: puntuación inicial, final y capitalización
         punct_start_logits, punct_end_logits, cap_logits = model(input_ids, attention_mask=attention_mask)
 
-    # 🔍 Tomamos la predicción más probable (argmax) para cada token
     pred_punct_start = torch.argmax(punct_start_logits, dim=-1)[0].cpu().tolist()
     pred_punct_end   = torch.argmax(punct_end_logits, dim=-1)[0].cpu().tolist()
     pred_cap         = torch.argmax(cap_logits, dim=-1)[0].cpu().tolist()
@@ -288,11 +286,6 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
     current_cap = 0
     current_punct_start = 0
     current_punct_end = 0
-
-    if verbose == True:
-        print("\n🔍 Predicción token por token:")
-        print(f"{'TOKEN':15s} | {'P_START':>7s} | {'P_END':>5s} | {'CAP':>3s} | {'FINAL':15s}")
-        print("-" * 65)
 
     for i, (token, punct_start, punct_end, cap_label) in enumerate(zip(tokens, pred_punct_start, pred_punct_end, pred_cap)):
         if token in ["[CLS]", "[SEP]", "[PAD]"] or attention_mask[0, i].item() == 0:
@@ -316,28 +309,22 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
                 elif current_cap == 3:
                     word = word.upper()
 
-                # aplicar puntuación inicial
                 punct_ini = INV_PUNCT_START_TAGS.get(current_punct_start, "Ø")
                 if punct_ini == "¿":
                     word = "¿" + word
                 elif punct_ini != "Ø":
                     word = punct_ini + word
 
-                # aplicar puntuación final
                 punct_fin = INV_PUNCT_END_TAGS.get(current_punct_end, "Ø")
                 if punct_fin != "Ø":
                     word = word + punct_fin
 
                 final_words.append(word)
 
-            # empezar nueva palabra
             current_word = clean_token
             current_cap = cap_label
             current_punct_start = punct_start if punct_start != 0 else 0
             current_punct_end   = punct_end if punct_end != 0 else 0
-
-        if verbose:
-            print(f"{clean_token:15s} | {INV_PUNCT_START_TAGS.get(punct_start, 'Ø'):>7s} | {INV_PUNCT_END_TAGS.get(punct_end, 'Ø'):>5s} | {cap_label:3d} | {clean_token:15s}")
 
     # Procesar última palabra
     if current_word:
@@ -360,7 +347,7 @@ def predict_and_reconstruct(model, sentence, tokenizer, device, max_length=64, v
 
     return " ".join(final_words)
 
-def procesar_oracion(sentence: str, tokenizer):
+def generate_dataset(sentence: str, tokenizer):
     matches = list(re.finditer(r"\b(\w|' )+[^\s\w]?\b", sentence, flags=re.UNICODE))
     original_words = [m.group(0) for m in matches]
     cleaned_words = [re.sub(r"[^A-Za-zÀ-ÿ]", "", w).lower() for w in original_words]

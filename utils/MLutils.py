@@ -104,32 +104,20 @@ def compute_class_weights(
     clamp_min: float = 1.0,
     clamp_max: float = 5.0
 ) -> list[torch.Tensor]:
-    """
-    Para cada número de clases en `num_classes_list`, recorre el dataloader
-    contando ocurrencias de esa etiqueta (ignorando `ignore_index`), 
-    calcula pesos inversos^beta, y devuelve un tensor de pesos 
-    (clampeado) para cada cabeza de clasificación.
-    """
-    # 1) Prepara un Counter por tarea
     n_tasks = len(num_classes_list)
     counters = [Counter() for _ in range(n_tasks)]
 
-    # 2) Cuenta las etiquetas válidas en cada cabeza
     for batch in dataloader:
-        # asumo que las N últimas tuplas de batch son los labels
         label_tensors = batch[-n_tasks:]
         for lbl_tensor, counter in zip(label_tensors, counters):
             arr = lbl_tensor.cpu().numpy().ravel()
             valid = arr[arr != ignore_index]
             counter.update(valid)
 
-    # 3) Para cada contador, construye el tensor de pesos
     weight_tensors = []
     for counter, num_cls in zip(counters, num_classes_list):
         total = sum(counter.values())
-        # inversos^beta
         weights = {cls: (total/count)**beta for cls, count in counter.items()}
-        # vector [w_0, w_1, …, w_{num_cls-1}]
         w_tensor = (
             torch.tensor([weights.get(i, 1.0) for i in range(num_cls)],
                          dtype=torch.float32)
