@@ -1,0 +1,1 @@
+brands = {"mcdonald's": "McDonald's"}

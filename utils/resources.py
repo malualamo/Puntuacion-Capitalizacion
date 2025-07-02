@@ -1,10 +1,11 @@
 import random
+import re
+import unicodedata
 from datasets import load_dataset
 import json
-
 import wikipedia
-
 from utils.datautils import extraer_frases_dialogo, extraer_frases_subtitulos, limpiar_simbolos
+from data.variables import *
 
 def get_questions():
     DATA_URLS = {
@@ -54,49 +55,10 @@ def get_gemini_dataset():
 def get_wikipedia_dataset():
     wikipedia.set_lang("es")
 
-    temas = [
-        # Países y lugares
-        'Argentina', 'España', 'México', 'Colombia', 'Chile',
-        'Perú', 'Uruguay', 'Brasil', 'América Latina', 'Europa',
-
-        # Cultura argentina
-        'Lionel Messi', 'Diego Maradona', 'Lali Esposito', 'Charly Garcia', 'Dillom',
-        'Tiempos Violentos', 'Relatos Salvajes', 'Universidad de Buenos Aires', 'Rock nacional', 'Cine argentino',
-
-        # Historia y política
-        'Revolucion de Mayo', 'Independencia de Argentina', 'Simón Bolívar', 'Segunda Guerra Mundial', 'Guerra Fría',
-        'Revolución Francesa', 'Guerra Civil Española', 'Napoleón Bonaparte', 'Nelson Mandela', 'Dictadura militar en Argentina',
-
-        # Ciencia y tecnología
-        'Inteligencia artificial', 'ChatGPT', 'Redes neuronales', 'Robótica', 'Energía solar',
-        'Vacunas', 'COVID-19', 'Cambio climático', 'Computadora cuántica', 'NASA',
-
-        # Cultura general
-        'El Principito', 'Premio Nobel', 'Frida Kahlo', 'Pablo Picasso', 'Leonardo da Vinci',
-        'William Shakespeare', 'Gabriel García Márquez', 'Julio Cortázar', 'Literatura latinoamericana', 'Arte contemporáneo',
-
-        # Entretenimiento y medios
-        'Marvel', 'DC Comics', 'Netflix', 'Cine de terror', 'Películas de ciencia ficción',
-        'Música electrónica', 'Reguetón', 'Spotify', 'YouTube', 'TikTok',
-
-        # Deportes
-        'Fútbol', 'Copa Mundial de la FIFA', 'Juegos Olimpicos', 'Tenis', 'NBA',
-        'Boca Juniors', 'River Plate', 'Messi vs Ronaldo', 'Fórmula 1', 'Michael Jordan',
-
-        # Sociedad y actualidad
-        'Feminismo', 'Día Internacional de la Mujer', 'Diversidad cultural', 'Migración', 'Pobreza',
-        'Educación pública', 'Salud mental', 'Medio ambiente', 'Derechos humanos', 'Trabajo remoto',
-
-        # Filosofía y pensamiento
-        'Filosofía', 'Ética', 'Psicología', 'Sigmund Freud', 'Carl Jung',
-        'Existencialismo', 'Sociología', 'Economía', 'Política', 'Democracia'
-    ]
-
-
     with open("data/frases_wikipedia.json", "r", encoding="utf-8") as f:
         frases_wikipedia = json.load(f)
 
-    print(frases_wikipedia[:5])  # muestra las primeras frases
+    print(f"Se cargaron {len(frases_wikipedia)} frases de Wikipedia.")
 
     return frases_wikipedia
 
@@ -107,12 +69,10 @@ def get_pelis_dataset():
     with open("data/dialogos_esperando_la_carroza.json", "w", encoding="utf-8") as f:
         json.dump(esperando_la_carroza, f, ensure_ascii=False, indent=2)
 
-    print("✅ Frases extraídas y guardadas. Total:", len(esperando_la_carroza))
-    print(random.sample(esperando_la_carroza, 10))
+    print("Frases extraídas en total:", len(esperando_la_carroza))
 
     frases_relatos_salvajes = extraer_frases_subtitulos("data/subt_relatos_salvajes.srt")
 
-    # Guardar como JSON
     with open("data/frases_relatos_salvajes.json", "w", encoding="utf-8") as f:
         json.dump(frases_relatos_salvajes, f, ensure_ascii=False, indent=2)
 
@@ -120,3 +80,21 @@ def get_pelis_dataset():
     esperando_la_carroza = limpiar_simbolos(esperando_la_carroza)
 
     return esperando_la_carroza, frases_relatos_salvajes
+
+def get_mixture_dataset(oraciones_sinteticas, question_for_mixture):
+    cant_oraciones = len(oraciones_sinteticas)
+    question_for_mixture = [re.sub(r'[\\\(\)!¡“]', '', unicodedata.normalize("NFC", q).strip()) for q in question_for_mixture]
+    oraciones_sinteticas = [re.sub(r'[\\\(\)!¡“]', '', unicodedata.normalize("NFC", a).strip()) for a in oraciones_sinteticas]
+
+    tanda_1 = question_for_mixture[:cant_oraciones]
+    question_affirmation = [f"{q} {a}" for q, a in zip(tanda_1, oraciones_sinteticas)]
+
+    tanda_2 = question_for_mixture[cant_oraciones:2*cant_oraciones]
+    affirmation_question = [f"{a} {q}" for q, a in zip(tanda_2, oraciones_sinteticas)]
+
+    tanda_3 = question_for_mixture[2*cant_oraciones:3*cant_oraciones]
+    tanda_3_shuffled = random.sample(tanda_3, len(tanda_3))
+    question_question = [f"{q} {p}" for q, p in zip(tanda_3, tanda_3_shuffled)]
+
+    mixtures = question_affirmation + affirmation_question + question_question
+    return mixtures
