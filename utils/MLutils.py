@@ -128,7 +128,88 @@ def compute_class_weights(
 
     return weight_tensors
 
-def predicciones_TP(txt_path, model, tokenizer, device, max_length=128, verbose=False):
+def predicciones_TP(csv_path, model, tokenizer, device, max_length=128, verbose=False):
+    """
+    Toma un CSV ya tokenizado con columnas:
+    instancia_id, token_id, token, punt_inicial, punt_final, capitalización
+
+    Devuelve un nuevo CSV con esas columnas completadas por el modelo.
+    """
+
+    model.eval()
+
+    INV_PUNCT_TAGS = {v: k for k, v in PUNCT_TAGS.items()}
+    INV_CAP_TAGS = {v: k for k, v in CAP_TAGS.items()}
+    PUNCT_INICIAL = {"¿"}
+    PUNCT_FINAL = {".", ",", "?"}
+
+    df = pd.read_csv(csv_path)
+    if not {'instancia_id', 'token', 'token_id'}.issubset(df.columns):
+        raise ValueError("El CSV debe contener al menos las columnas: instancia_id, token_id, token")
+
+    resultados = []
+
+    for instancia_id, grupo in df.groupby("instancia_id"):
+        tokens = grupo['token'].tolist()
+        tokens_texto = tokenizer.convert_tokens_to_string(tokens)
+
+        encoding = tokenizer(
+            tokens_texto,
+            return_tensors='pt',
+            padding='max_length',
+            truncation=True,
+            max_length=max_length,
+            return_attention_mask=True,
+            return_token_type_ids=False,
+            is_split_into_words=False
+        )
+
+        input_ids = encoding['input_ids'].to(device)
+        attention_mask = encoding['attention_mask'].to(device)
+
+        with torch.no_grad():
+            punct_logits, cap_logits = model(input_ids, attention_mask=attention_mask)
+
+        pred_punct = torch.argmax(punct_logits, dim=-1)[0].cpu().tolist()
+        pred_cap = torch.argmax(cap_logits, dim=-1)[0].cpu().tolist()
+        tokens_pred = tokenizer.convert_ids_to_tokens(input_ids[0])
+
+        token_idx = 0
+        for i, token in enumerate(tokens_pred):
+            if token in ["[CLS]", "[SEP]", "[PAD]"] or attention_mask[0, i].item() == 0:
+                continue
+
+            if token_idx >= len(grupo):
+                break  # evitar desborde si se truncó
+
+            original_row = grupo.iloc[token_idx].copy()
+
+            punct_str = INV_PUNCT_TAGS.get(pred_punct[i], "")
+            if punct_str in PUNCT_INICIAL:
+                original_row['punt_inicial'] = punct_str
+                original_row['punt_final'] = ""
+            elif punct_str in PUNCT_FINAL:
+                original_row['punt_inicial'] = ""
+                original_row['punt_final'] = punct_str
+            else:
+                original_row['punt_inicial'] = ""
+                original_row['punt_final'] = ""
+
+            original_row['capitalización'] = pred_cap[i]
+
+            resultados.append(original_row)
+            token_idx += 1
+
+    df_resultado = pd.DataFrame(resultados)
+    output_path = csv_path.replace(".csv", "_completado.csv")
+    df_resultado.to_csv(output_path, index=False, encoding='utf-8-sig')
+
+    if verbose:
+        print(f"\nPredicciones guardadas en: {output_path}")
+
+    return df_resultado
+
+def predicciones_TP_old(txt_path, model, tokenizer, device, max_length=128, verbose=False):
     """
     Procesa un archivo TXT con párrafos (una instancia por párrafo).
     Devuelve un CSV con columnas:
